@@ -87,7 +87,7 @@
                 "autoReveal": false
               },
               "icon": "lucide-folder-closed",
-              "title": "文件列表"
+              "title": "Files"
             }
           },
           {
@@ -218,41 +218,43 @@
   },
   "left-ribbon": {
     "hiddenItems": {
-      "switcher:打开快速切换": false,
-      "graph:查看关系图谱": false,
-      "canvas:新建白板": false,
-      "daily-notes:打开/创建今天的日记": false,
-      "templates:插入模板": false,
-      "command-palette:打开命令面板": false,
-      "bases:新建数据库": false,
-      "obsidian-excalidraw-plugin:新建绘图文件": false
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false,
+      "obsidian-excalidraw-plugin:New drawing": false
     }
   },
   "active": "e6209182b9dc2ec5",
   "lastOpenFiles": [
-    "Unity针对画面特效部分Bloom处理.md",
+    "UnrealEngine/Socket和Virtual Bones区别.md",
+    "ゲーム制作日本語/世界の窓はとっても狭い.md",
+    "ゲーム制作日本語/ワンボタンでできること.md",
+    "ゲーム制作日本語/パラメーターでキャラ立ち.md",
+    "ゲーム制作日本語/分解　考察「こうさつ」　再構築.md",
+    "Unityについて技術/ObjectPoolについて考え.md",
+    "Unityについて技術/Unity针对画面特效部分Bloom处理.md",
+    "Unityについて技術",
     "日本語練習/2026-06-01.md",
     "日本語練習",
     "日本ドラマ/日剧中出现的副词.md",
     "Images/UnrealEngine_TimeDilation.png",
     "Images/Mixamo下载时候注意选项.png",
-    "ゲーム制作日本語/ワンボタンでできること.md",
-    "ゲーム制作日本語/分解　考察「こうさつ」　再構築.md",
     "Templates/日本語模板.md",
     "Templates/标准模板 - 副本.md",
-    "ゲーム制作日本語/世界の窓はとっても狭い.md",
     "日本ドラマ/2025-3-27　ドラマ台詞.md",
     "ゲーム制作日本語",
     "日本ドラマ/2025-3-26 校閲ガール.md",
     "日本ドラマ/2025-3-23 校閲ガール.md",
     "日本ドラマ",
-    "ゲーム制作日本語/パラメーターでキャラ立ち.md",
     "UnrealEngine/UnrealEngine中姿势融合的方式.md",
     "线性代数.md",
     "日本ドラマ/2025-3-24 校閲ガール.md",
     "UnrealEngine/从Mixamo中导入模型动作流程.md",
     "UnrealEngine/Lyra Locomotion部分学习.md",
-    "UnrealEngine/Socket和Virtual Bones区别.md",
     "UnrealEngine/UnrealEngine时间膨胀.md",
     "UnrealEngine",
     "Templates/UnrealEngine模板.md",
@@ -265,8 +267,6 @@
     "Templates/stand.yaml",
     "Templates/标准模板 - 副本.yaml",
     "Templates/标准模板.yaml",
-    "Templates",
-    "欢迎.md",
-    "Invalid date.md"
+    "欢迎.md"
   ]
 }
