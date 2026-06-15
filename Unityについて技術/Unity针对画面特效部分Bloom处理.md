@@ -16,6 +16,7 @@ tags:
 - 指定テクスチャーを現在カメラの描画結果と混ぜあわせる
   
 ## 対応方法
+
 Q: エフェクトを指定テクスチャーに描画させる
 A: Unity内の<mark style="background: #ABF7F7A6;">RenderObject</mark>という既存機能があり、このコードを踏襲して出力先を他のテクスチャーに入れ替える
 
@@ -26,38 +27,27 @@ Q: 指定テクスチャーを現在カメラの描画結果とブレンドす�
 A: 無し
 
 ## エフェクトをテクスチャーに描画する
-- RenderToTexturePassを作成する
-- RenderToTextureFeatureを作成する
+- RenderToTexturePassクラスを作成する
+- RenderToTextureFeatureクラスを作成する
 ### 1. ScriptableRenderPassの子クラスを作成する
 
 ```csharp
 
 public class RenderToTexturePass : ScriptableRenderPass
-
 {
 
     //指定テクスチャー
-
     public RTHandle ExternalTargetColor;
 
-  
-
-    public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
-
+    public override void RecordRenderGraph(RenderGraph renderGraph,ContextContainer frameData)
     {
-
         using(var builder = renderGraph.AddRasterRenderPass<PassData>(k_PassName,out PassData passData,profilingSampler))
-
         {
-
             TextureHandle colorTarget = renderGraph.ImportTexture(ExternalTargetColor);
 
             //今回出力先を入れ替える
-
-            builder.SetRenderAttachment(colorTarget,0,AccessFlags.ReadWrite);
-
+	       builder.SetRenderAttachment(colorTarget,0,AccessFlags.ReadWrite);
         }
-
     }
 
 }
@@ -102,7 +92,7 @@ public class RenderToTextureFeature : ScriptableRendererFeature
 ```
 
 ### 3. 結果確認
-
+![[only_effect_bloom.png|485]]
 
 
 ## Bloom処理を適用する
@@ -245,3 +235,4 @@ float4 CompoiteBloomFinal(Varyings input) : SV_Target
 ```
 
 ## 最終結果確認
+![[final_bloom.png|598]]
