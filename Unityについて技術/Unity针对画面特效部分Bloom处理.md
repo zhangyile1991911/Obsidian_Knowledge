@@ -15,51 +15,36 @@ tags:
 - 指定テクスチャーにブルームを適用する
 - 指定テクスチャーを現在カメラの描画結果と混ぜあわせる
   
-## 対応方法
-Q: エフェクトを指定テクスチャーに描画させる
-A: Unity内の<mark style="background: #ABF7F7A6;">RenderObject</mark>という既存機能があり、このコードを踏襲して出力先を他のテクスチャーに入れ替える
+## 実装項目
 
-Q: 指定テクスチャーにブルームを適用する
-A: Unity内に既存ブルーム結果を一致するため、エンジン内Shaderを使用する
+> [!tip] エフェクトを指定テクスチャに描画させる
+Unity内の<mark style="background: #ABF7F7A6;">RenderObject</mark>という既存機能があり、このコードを踏襲して出力先を他のテクスチャーに入れ替える
 
-Q: 指定テクスチャーを現在カメラの描画結果とブレンドする
-A: 無し
+> [!tip]  指定テクスチャにブルームを適用する
+Unity内に既存ブルーム結果を一致するため、エンジン内Shaderを再利用する
 
-## エフェクトをテクスチャーに描画する
+> [!tip] 指定テクスチャを現在カメラの描画結果とブレンドする
+
+
+## エフェクトをテクスチャに描画する
 - RenderToTexturePassを作成する
 - RenderToTextureFeatureを作成する
 ### 1. ScriptableRenderPassの子クラスを作成する
 
 ```csharp
-
 public class RenderToTexturePass : ScriptableRenderPass
-
 {
-
     //指定テクスチャー
-
     public RTHandle ExternalTargetColor;
-
-  
-
     public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
-
     {
-
         using(var builder = renderGraph.AddRasterRenderPass<PassData>(k_PassName,out PassData passData,profilingSampler))
-
         {
-
             TextureHandle colorTarget = renderGraph.ImportTexture(ExternalTargetColor);
-
             //今回出力先を入れ替える
-
             builder.SetRenderAttachment(colorTarget,0,AccessFlags.ReadWrite);
-
         }
-
     }
-
 }
 ```
 
