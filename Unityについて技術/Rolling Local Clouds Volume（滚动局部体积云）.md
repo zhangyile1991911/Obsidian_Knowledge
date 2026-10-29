@@ -38,8 +38,10 @@ tags:
 
 ## 基础世界空间采样（Basic Worldspace）
 
-![节点](RollingLocalClouds_images/03.png)
-
+```
+float3 worldPos = mul(unity_ObjectToWorld,float4(i.objectPos,1.0)).xyz;
+float noise = tex2Dlod(_NoiseTex,float4(worldPos.xz,0,0)).r;
+```
 先试试最标准的方式：把物体空间转换到世界空间来采样纹理。这里一开始就用 `tex2Dlod`，因为后面的 raymarching 循环会需要它。
 
 ![效果](RollingLocalClouds_images/04.gif)
@@ -52,8 +54,14 @@ tags:
 
 ## 进入点（Entry Point）
 
-![节点](RollingLocalClouds_images/05.png)
-
+```
+//沿着射线 找到进入点
+float3 entryPosOS = cameraLocalPos + rayDirection * distanceToBoxEntry;
+//转换到世界坐标系下
+float3 entryPosWS = mul(unity_ObjectToWorld,float4(entryPosOS,1.0)).xyz;
+//使用xz轴采样
+float noise = tex2Dlod(_NoiseTex,float4(entryPosWS.xz,0,0)).r;
+```
 ![示意图：这个采样点发生的位置（对每个像素都会发生，而不只是一次）](RollingLocalClouds_images/06.png)
 
 ![效果](RollingLocalClouds_images/07.gif)
@@ -62,8 +70,11 @@ tags:
 
 ## 离开点（Exit Point）
 
-![节点](RollingLocalClouds_images/08.png)
-
+```
+float3 exitPosOS = cameraLocalPos + rayDirection * distanceToBoxExit;
+float3 exitPosWS = mul(unity_ObjectToWorld,float4(exitPosOS,1.0)).xyz;
+float noise = tex2Dlod(_NoiseTex,float4(exitPosWS.xz,0,0)).r;
+```
 再试试另一侧，用离开点采样会是什么样？
 
 ![离开点采样：如果中途有东西挡住，也会通过深度缓冲在这里提前退出](RollingLocalClouds_images/09.png)
@@ -98,43 +109,61 @@ stepSize 就是循环里从进入点往离开点方向每次前进的距离。
 
 ## 循环（Looping）
 
-![循环起点](RollingLocalClouds_images/14.png)
-
+```
+float stepSize = distanceInBox / float(_StepCount);
+float clouds = 0;
+[loop]
+for(int s = 0; s < _StepCount;s++)
+{
+	float sliceDistance = distanceToboxEntry * float(s) * stepSize;
+	float3 slicePosOS = cameraLocalPos + rayDirection * sliceDistance;
+	float3 slicePosWS = mul(unity_ObjectToWorld,float4(slicePosOS,1.0)).xyz;
+	float noise = tex2Dlod(_NoiseTex,float4(slicePosWS.xz,0,0)).r;
+	clouds += noise;
+}
+return clouds;
+```
 这是我们要先尝试的循环。
-
-![节点](RollingLocalClouds_images/15.png)
-
+```
+//步进一次的长度
+float stepSize = distanceInBox / float(_StepCount)
+```
 材质里有一个参数 `_Stepcount`，用来设置步数／切片数。
 为了求出每次要往前推进多远，我们算出 stepSize：它等于盒子内部的距离除以步数。此时还没有考虑光线方向，那部分会在循环里处理。
-
-![节点](RollingLocalClouds_images/16.png)
+```
+float clouds = 0;
+[loop]
+for(int s = 0;s < _StepCount;s++)
+{}
+```
 
 接着我们声明一个 clouds 值，用来在循环里累加每一层采到的噪声，然后建立循环。
-
-![节点](RollingLocalClouds_images/17.png)
+```
+float sliceDistance = distanceToBoxEntry + float(s) * stepSize;
+float3 slicePosOS = cameraLocalPos + rayDirection * sliceDistance;
+```
 
 ![节点](RollingLocalClouds_images/18.png)
 
 从盒子起点开始，一步步走到内部每个位置，每次都算出一个新的切片位置用于采样。
 
-![节点](RollingLocalClouds_images/19.png)
+```
+float3 slicePosWS = mul(unity_ObjectToWorld,float4(slicePosOS,1.0)).xyz;
+float noise = tex2Dlod(_NoiseTex,float4(slicePosWS.xz,0,0)).r;
+clouds += noise;
+```
 
 然后把它转成世界空间坐标，用于纹理采样。
-
 ![效果](RollingLocalClouds_images/20.gif)
 
 现在看起来有体积感了，但每多加一步就会更亮——因为我们只是把所有东西简单相加，没有考虑每一层实际「贡献」了多少。
-
 我们需要让每一层新增的量，随着「已经被挡住的部分」而减少。
-
 可以使用下面这套做法：
-
 ```
-Visibility = 1                              // 穿过所有切片后的总可见度
-
+Visibility = 1 // 穿过所有切片后的总可见度
 循环内：
     首先：
-    Passthrough = exp(-density * stepSize)  // 本层密度 × 步长；exp(-x) 把密度映射为取反后的 0–1 范围
+    Passthrough = exp(-density * stepSize) //本层密度×步长exp(-x)把密度映射为取反后的 0–1范围
     然后：
     Visibility *= Passthrough
 ```
@@ -142,36 +171,86 @@ Visibility = 1                              // 穿过所有切片后的总可见
 你可以把这理解为：透过体积看过去，就像透过一堆涂了颜料的玻璃板。如果第一块玻璃上的颜料完全不透明，那后面的层就不重要了，因为视线已经被挡住了。
 
 在 shader 里我们用 0 到 1 的数值来表示，而不是真实的透明玻璃＋颜料，但道理是一样的。
-
 ![示意](RollingLocalClouds_images/21.png)
 
 只要有密度挡住视线，每一层的可见度就会下降。
-
 我们换一组数值再看一次：
-
 ![示意](RollingLocalClouds_images/22.png)
 
 所以我们需要在循环过程中，用每一层来追踪这个 visibility。
 
-![节点](RollingLocalClouds_images/23.png)
+```
+float step = distanceInBox / float(_StepCount);
+
+float visibility = 1;
+float3 cloudsColResult = 0;
+
+[loop]
+for(int s = 0; s < _StepCount;s++)
+{
+	float sliceDistance = distanceToBoxEntry + float(s) * stepSize;
+	float3 slicePosOS = cameraLocalPost + rayDirection * sliceDistance;
+	float3 slicePosWS = mul(unity_ObjectToWorld,float4(slicePosOS,1.0)).xyz;
+	float noise = tex2Dlod(_noiseTex,float4(slicePosWS.xz,0,0)).r;
+	
+	float density = _Density * noise;
+	//exp 以e为底的指数函数,指数为负数时候e^x取值范围就是0-1之间
+	float passthrough = exp(-density * stepSize);
+	//当前切片上的颜色贡献度
+	float3 sliceClouds = noise * visibility * (1.0 - passthrough);
+	
+	visibility *= passthrough;
+	
+	cloudsColResult += sliceClouds;
+}
+
+float alpha = saturate(1.0 - visibility);
+float3 coloredDensity = saturate(clodsColResult) * alpha;
+
+return float4(coloredDensity,alpha);
+```
 
 这是循环的下一版，我们来看看。
+```
+float step = distanceInBox / float(_StepCount);
 
-![节点](RollingLocalClouds_images/24.png)
-
+float visibility = 1; // 透明度 1 - seethrough，0 = 完全看不见
+float3 cloudsColResult = 0;
+```
 首先把 visibility 这个 float 设为 1，表示完全可见。
 然后可以把累加的 clouds 由 float 改成 `float3 cloudsColResult`——最终我们想要彩色的云，所以现在就改成 float3 比较好。
 
-![节点](RollingLocalClouds_images/25.png)
-
+```
+for(int s = 0; s < _StepCount;s++)
+{
+	float sliceDistance = distanceToBoxEntry + float(s) * stepSize;
+	float3 slicePosOS = cameraLocalPost + rayDirection * sliceDistance;
+	float3 slicePosWS = mul(unity_ObjectToWorld,float4(slicePosOS,1.0)).xyz;
+	float noise = tex2Dlod(_noiseTex,float4(slicePosWS.xz,0,0)).r;
+	
+	float density = _Density * noise;
+	//exp 以e为底的指数函数,指数为负数时候e^x取值范围就是0-1之间
+	float passthrough = exp(-density * stepSize);
+	
+}
+```
 接着在循环里，把滑条参数 `_Density` 和噪声相乘，并用它计算这一层的 passthrough。
+```
+float passthrough = exp(-density * stepSize);
+float3 sliceClouds = noise * visiblity * (1.0 - passthrough);
 
-![节点](RollingLocalClouds_images/26.png)
+visibility *= passthrough;
+cloudsColResult += sliceClouds;
+```
 
 在把当前层的噪声累加到 cloudsColResult 之前，先乘上 visibility，以及 0–1 空间下该层的密度（即 `1 - passthrough`）。
 同时更新 visibility，供下一层使用。
 
-![节点](RollingLocalClouds_images/27.png)
+```
+float alpha = saturate(1.0 - visibility);
+float3 coloredDensity = saturate(cloudsColResult) * alpha;
+return float4(coloredDensity,alpha);
+```
 
 然后用 1 减去 visibility 得到 alpha（visibility 是「穿透后的可见度」，取反就是「被挡住的部分」）。
 再把 alpha 与 cloudsColResult 相乘，得到最终颜色。
@@ -186,12 +265,19 @@ Visibility = 1                              // 穿过所有切片后的总可见
 
 ![效果](RollingLocalClouds_images/29.gif)
 
-![节点](RollingLocalClouds_images/30.png)
-
+```
+float verticalFade = saturate(slicePosOS.y + _HeightOffset) * _Vertical;
+float verticalNoiseFade = 1 - (verticalFade - noise);
+```
 我们取切片位置的 Y（`slicePosOS.y`），加上 `_HeightOffset`，再乘以 `_Vertical`，这样可以移动渐变的起始位置并缩放强度。
 然后减去噪声并取反——因为渐变默认是从上往下，而我们需要从下往上。
 
-![节点](RollingLocalClouds_images/31.png)
+```
+float verticalFade = saturate(slicePosOS.y + _HeightOffset) * _Vertical;
+float verticalNoiseFade = 1 - (verticalFade - noise);
+
+if(verticalNoiseFade < 0.0001) continue;
+```
 
 对于渐变以上的像素，我们可以利用循环：当垂直渐变值过低时直接 `continue` 跳过。这样能得到干净利落的边缘。
 
@@ -312,3 +398,419 @@ Visibility = 1                              // 穿过所有切片后的总可见
   https://www.youtube.com/watch?v=_JzfXkRuQzo
 
 感谢阅读！
+
+
+```
+Shader "Custom/VolumetricFog"
+
+{
+
+Properties
+
+{
+
+[MainColor] _BaseColor("Base Color", Color) = (1, 1, 1, 1)
+
+_NoiseTex ("Noise", 2D) = "white" {}
+
+_ScaleNoise ("ScaleNoise",Float) = 1.0
+
+_Density ("Density",Float)= 1.0
+
+_StepCount ("StepCount",Integer) = 1
+
+}
+
+  
+
+SubShader
+
+{
+
+Tags
+
+{
+
+"RenderPipeline" = "UniversalPipeline"
+
+"RenderType" = "Transparent"
+
+"Queue" = "Transparent"
+
+}
+
+HLSLINCLUDE
+
+  
+
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderVariablesFunctions.hlsl"
+
+//获取深度贴图
+
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
+
+  
+  
+
+bool RayBoxIntersect(float3 rayOrigin,float3 rayDirection,out float entryDistance,out float exitDistance)
+
+{
+
+float3 invDirection = 1 / rayDirection;
+
+float3 distanceToFrontWalls = (-0.5 - rayOrigin) * invDirection;
+
+float3 distanceToBackWalls = (0.5 - rayOrigin) * invDirection;
+
+float3 trueEntryPerAxis = min(distanceToFrontWalls,distanceToBackWalls);
+
+float3 trueExitPerAxis = max(distanceToFrontWalls,distanceToBackWalls);
+
+//进入的时候要找最大值，因为当x进入了 并不代表y和z也进入了
+
+entryDistance = max(max(trueEntryPerAxis.x,trueEntryPerAxis.y),trueEntryPerAxis.z);
+
+//同理，只要有一个轴上坐标离开了也就意味着整体离开了
+
+exitDistance = min(min(trueExitPerAxis.x,trueExitPerAxis.y),trueExitPerAxis.z);
+
+return exitDistance >= max(entryDistance,0.0);
+
+}
+
+  
+
+float SampleDeviceDepth(float2 screenUV)
+
+{
+
+//SampleSceneDepth 返回 范围是 [0, 1]
+
+// float SampleSceneDepth(float2 uv)
+
+// {
+
+// return SAMPLE_TEXTURE2D_X(_CameraDepthTexture,
+
+// sampler_CameraDepthTexture,
+
+// UnityStereoTransformScreenSpaceTex(uv)).r;
+
+// }
+
+#if UNITY_REVERSED_Z //在D3D11/12、Metal、Vulkan、主机情况0 = 远 1 = 近
+
+return SampleSceneDepth(screenUV);
+
+#else
+
+return lerp(UNITY_NEAR_CLIP_VALUE,1.0,SampleSceneDepth(screenUV));
+
+#endif
+
+}
+
+struct Attributes
+
+{
+
+float4 positionOS : POSITION;
+
+float2 uv : TEXCOORD0;
+
+};
+
+  
+
+struct Varyings
+
+{
+
+float4 positionHCS : SV_POSITION;
+
+float3 positionOS : TEXCOORD0;
+
+};
+
+  
+
+TEXTURE2D(_NoiseTex);
+
+SAMPLER(sampler_NoiseTex);
+
+  
+
+CBUFFER_START(UnityPerMaterial)
+
+half4 _BaseColor;
+
+float _Density;
+
+float4 _NoiseTex_ST;
+
+float _ScaleNoise;
+
+int _StepCount;
+
+CBUFFER_END
+
+  
+
+ENDHLSL
+
+  
+
+Pass
+
+{
+
+Name "Fog"
+
+ZWrite Off
+
+Blend One OneMinusSrcAlpha
+
+Cull Front //避免相机进入后被剔除
+
+ZTest Always
+
+  
+
+HLSLPROGRAM
+
+  
+
+#pragma vertex vert
+
+#pragma fragment frag
+
+  
+
+Varyings vert(Attributes IN)
+
+{
+
+Varyings OUT;
+
+// struct VertexPositionInputs
+
+// {
+
+// float3 positionWS; // World space position（世界空间）
+
+// float3 positionVS; // View space position（视图空间）
+
+// float4 positionCS; // Homogeneous clip space position（齐次裁剪空间）
+
+// float4 positionNDC; // Homogeneous NDC（给屏幕 UV 用）
+
+// };
+
+VertexPositionInputs posInputs = GetVertexPositionInputs(IN.positionOS.xyz);
+
+OUT.positionHCS = posInputs.positionCS;
+
+OUT.positionOS = IN.positionOS.xyz;
+
+return OUT;
+
+}
+
+  
+
+half4 frag(Varyings IN) : SV_Target
+
+{
+
+float3 cameraPosOS = TransformWorldToObject(_WorldSpaceCameraPos);
+
+float distanceToBoxEntry,distanceToBoxExit;
+
+  
+
+//获取顶点在屏幕UV上的坐标
+
+float2 screenUV = IN.positionHCS.xy / _ScaledScreenParams.xy;
+
+//拿到深度值，但这个时候还是[0-1]
+
+float deviceDepth = SampleDeviceDepth(screenUV);
+
+//将深度值从0-1转换回原来的世界坐标
+
+float3 sceneHitWS = ComputeWorldSpacePosition(screenUV,deviceDepth,UNITY_MATRIX_I_VP);
+
+//将深度值从0-1转换回原来的物体坐标
+
+float3 sceneHitOS = mul(unity_WorldToObject,float4(sceneHitWS,1.0)).xyz;
+
+//物体空间下的从当前点到相机方向
+
+float3 rayDirOS = normalize(IN.positionOS - cameraPosOS);
+
+bool isIntersect = RayBoxIntersect(cameraPosOS,rayDirOS,distanceToBoxEntry,distanceToBoxExit);
+
+if(!isIntersect)
+
+{
+
+discard;
+
+}
+
+distanceToBoxEntry = max(distanceToBoxEntry,0.0);
+
+  
+
+//
+
+float sceneDepthOS = dot(sceneHitOS - cameraPosOS, rayDirOS);
+
+distanceToBoxExit = min(distanceToBoxExit,sceneDepthOS);
+
+if(distanceToBoxExit <= distanceToBoxEntry)
+
+{
+
+discard;
+
+}
+
+float distanceInBox = (distanceToBoxExit - distanceToBoxEntry) * 1.0;
+
+// 尝试从出射点采样
+
+// float3 exitPosOS = cameraPosOS + rayDirOS * distanceToBoxExit;
+
+// float3 exitPosWS = mul(unity_ObjectToWorld,float4(exitPosOS,1.0)).xyz;
+
+// float2 uv = exitPosWS.xz * _ScaleNoise;
+
+// float2 uvTex = uv * _NoiseTex_ST.xy + _NoiseTex_ST.zw;
+
+// float noise = SAMPLE_TEXTURE2D_LOD(_NoiseTex,sampler_NoiseTex,uvTex,0).r;
+
+// return half4(noise.xxx,density);
+
+// float g = SAMPLE_TEXTURE2D(_NoiseTex,sampler_NoiseTex,uvTex).r;
+
+// return half4(g.xxx,1.0);
+
+float stepSize = distanceInBox / (float)_StepCount;
+
+float visibility = 1.0;
+
+float3 cloudsColResult = 0;
+
+[loop]
+
+for(int s = 0;s < _StepCount;s++)
+
+{
+
+//步长
+
+float sliceDistance = distanceToBoxEntry + float(s) * stepSize;
+
+float3 slicePosOS = cameraPosOS + rayDirOS * sliceDistance;
+
+float3 slicePosWS = mul(unity_ObjectToWorld,float4(slicePosOS,1.0)).xyz;
+
+  
+
+float2 uv = slicePosWS.xz * _ScaleNoise;
+
+float2 uvTex = uv * _NoiseTex_ST.xy + _NoiseTex_ST.zw;
+
+float noise = SAMPLE_TEXTURE2D_LOD(_NoiseTex,sampler_NoiseTex,uvTex,0).r;
+
+float density = _Density * noise;
+
+//exp 以e为底的指数函数,指数为负数时候e^x取值范围就是0-1之间
+
+//density越大，passthrough越接近0
+
+float passthrough = exp(-density * stepSize);
+
+float3 sliceClouds = noise * visibility * (1.0 - passthrough);
+
+  
+
+visibility *= passthrough;
+
+  
+
+cloudsColResult += sliceClouds;
+
+}
+
+  
+
+float alpha = saturate(1.0 - visibility);
+
+float3 coloredDensity = saturate(cloudsColResult) * alpha;
+
+  
+
+return half4(coloredDensity,alpha);
+
+// //世界空间转换到视口空间矩阵UNITY_MATRIX_V
+
+// //第一行相机向右方向
+
+// //第二行相机向上方向
+
+// //第三行相机向前方向
+
+// //因为在Unity中相机看向-z 需要取反
+
+// float3 camForward = -UNITY_MATRIX_V[2].xyz;
+
+}
+
+ENDHLSL
+
+}
+
+  
+
+// Pass
+
+// {
+
+// Name "BoxDepthWrite"
+
+// Tags
+
+// {
+
+// "LightMode" = "DepthNormals"//用于写入深度
+
+// }
+
+// ZWrite On
+
+// ColorMask 0
+
+// HLSLPROGRAM
+
+// #pragma target 2.0
+
+  
+
+// #pragma vertex DepthNormalsVertex
+
+// #pragma fragment DepthNormalsFragment
+
+// #include "Packages/com.unity.render-pipelines.universal/Shaders/LitDepthNormalsPass.hlsl"
+
+// ENDHLSL
+
+// }
+
+}
+
+}
+```

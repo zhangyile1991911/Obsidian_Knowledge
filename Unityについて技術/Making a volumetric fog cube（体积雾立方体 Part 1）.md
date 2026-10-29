@@ -90,11 +90,33 @@ tags:
 
 ![判断：命中](FogCube_images/09.png)
 
+> [!info] 注解
+> 假设在2D空间中盒子的四条边是无限延展的
+> 那么可以得到 左右两条边是 x = -0.5 x = +0.5
+> 上下两条边是 y = +0.5 y = -0.5
+> 假设 盒子边长为1，在(0,0)点，射线从左边往右射入
+> 已知 射线的出发点(rayOrigin)，方向(rayDirection)，求到线(point)的距离(t)
+> 先求出x
+> point = rayOrigin + rayDirection * t;
+> 0.5 = rayOrigin.x + rayDirection.x * t;
+> 0.5 - rayOrigin.x = rayDirection.x * t:
+> (0.5 - rayOrigin.x)/rayDirection.x = t;
+> t = 射线进入盒子的距离
+
+
 如果射线进入的距离小于离开的距离，那么它一定在盒子内部。
-
-![判断：进入距离 < 离开距离](FogCube_images/10.png)
-
 下面是这段逻辑的代码，配合注释应该不言自明。
+
+```HLSL
+bool rayBoxIntersect(float2 rayOrigin,float2 rayDirection)
+{
+	float2 distanceToFrontWalls = (-0.5 - rayOrigin) / rayDirection;
+	float2 distanceToBackWalls = (0.5 - rayOrigin) / rayDirection;
+	float entryDistance = max(distanceToFrontWalls.x,distanceToFrontWalls.y);
+	float exitDistance = min(distanceToBackWalls.x,distanceToBackWalls.y);
+	return exitDistance >= max(entryDistance,0.0);
+}
+```
 
 ### 如果没击中呢？（What about a miss?）
 
@@ -141,8 +163,21 @@ https://www.youtube.com/shorts/GqwUHXvQ7oA
 现在回到我们的 shader——这里没有 2D 盒子，而是 3D 盒子。
 实际上变化不大：求交函数的返回结果依然是命中或未命中，同时也通过输出参数（`out float ...distance`）给出进入和离开距离。用于起点、方向和墙面判断的 float2 现在都变成了 3 个轴。
 
-![3D 代码](FogCube_images/16.png)
-
+```HLSL
+bool rayBoxIntersect(float3 rayOrigin,float3 rayDirection,out float entryDistance,out float exitDistance)
+{
+	float3 invDirection = 1 / rayDirection;
+	float3 distanceToFrontWalls = (-0.5 - rayOrigin) * invDirection;
+	float3 distanceToBackWalls = (0.5 - rayOrigin) * invDirection;
+	
+	float3 trueEntryPerAxis = min(distanceToFrontWalls,distanceToBackWalls);
+	float3 trueExitPerAxis = max(distanceToFrontWalls,distanceToBackWalls);
+	
+	entryDistance = max(max(trueEntryPerAxis.x,trueEntryPerAxis.y),trueEntryPerAxis.z);
+	exitDistance = min(min(trueExitPerAxis.x,trueExitPerAxis.y),trueExitPerAxis.z);
+	return exitDistance >= max(entryDistance,0.0);
+}
+```
 相比前面的 2D 代码示例，这里多了一处处理：针对**负方向的射线**做额外判断，确定哪个才是真正的最近墙／最远墙（`trueEntryPerAxis` 和 `trueExitPerAxis`）。
 如果射线方向是从另一侧过来的，前后墙可能会反过来，因为我们要用的只是任意的 -0.5 和 0.5 这两个值。
 
@@ -156,7 +191,23 @@ https://www.youtube.com/shorts/GqwUHXvQ7oA
 
 最基础的版本会逐像素输出「在盒子内部的距离」。
 
-![节点](FogCube_images/18.png)
+```HLSL
+half4 frag(v2f i) : SV_Target
+{
+	float3 cameraLocalPos = _worldSpaceCameraPos->ObjectSpace;
+	
+	float3 rayDirection = normalize(i.objectPos - cameraLocalPos);
+	
+	float distanceToBoxEntry,distanceToBoxExit;
+	
+	if(!rayBoxIntersect(cameraLocalPos,rayDirection,distanceToBoxEntry,distanceToBoxExit))
+	{
+		discard;
+	}
+	float distanceInBox = distanceToBoxExit - distanceToBoxEntry;
+	return distanceInBox;
+}
+```
 
 ![效果](FogCube_images/19.gif)
 
@@ -168,8 +219,6 @@ https://www.youtube.com/shorts/GqwUHXvQ7oA
 
 把相机放进盒子内部，它就消失了。
 
-![节点](FogCube_images/21.png)
-
 我们可以用 **Cull Front** 来解决。
 
 ![Cull Front 效果](FogCube_images/22.gif)
@@ -179,7 +228,13 @@ https://www.youtube.com/shorts/GqwUHXvQ7oA
 
 ![穿透地面](FogCube_images/23.gif)
 
-![节点](FogCube_images/24.png)
+
+```
+ZWrite Off
+Blend One OneMinusSrcAlpha
+Cull Front //避免相机进入后被剔除
+ZTest Always
+```
 
 于是再加一个 **ZTest Always**，这样 shader 总会绘制我们的立方体。
 但这样一来它又不理会前方是否有遮挡了——它会永远可见，即使隔着地板和墙壁也能看到。
@@ -190,12 +245,28 @@ https://www.youtube.com/shorts/GqwUHXvQ7oA
 
 因为这是一个体积，我们不能简单地用标准深度测试，而是要把射线自身的距离也考虑进去。
 
-![节点](FogCube_images/25.png)
+```HLSL
+float2 screenUV = IN.screenPos.xy / IN.screenPos.w;
+float rawDepth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture,screenUV);
+float eyeDepth = LinearEyeDepth(rawDepth);
+```
 
 首先需要深度纹理。
 这里用 `eyeDepth`，因为我们需要的是世界单位，而不是 0–1 的 `linearDepth`。
 
-![节点](FogCube_images/26.png)
+```HLSL
+float3 camForwardWS = -UNITY_MATRIX_V[2].xyz;
+float3 rayDirectionWS = normalize(mul((float3x3)unity_ObjectToWorld,rayDirection));
+float cosAngle = dot(camForwardWS,rayDirectionWS);
+if(cosAngle > 0.01)
+{
+	float depthAlongRay = eyeDepth / cosAngle;
+	float3 sceneHitWS = _WorldSpaceCameraPos + rayDirectionWS * depthAlongRay;
+	float3 sceneHitOS = mul(unity_ObjectToWorld,float4(sceneHitWS,1.0)).xyz;
+	float rayDepthDistance = dot(sceneHitOS - cameraLocalPos,rayDirection);
+	distanceToBoxExit = min(distanceToBoxExit,rayDepthDistance);
+}
+```
 
 深度缓冲给出的，是当前像素在**正前方**（dead-on）方向上距相机的世界空间距离。
 但我们其实是朝网格表面发射了**一堆**射线，并不都是正前方的，所以需要做一串转换：
@@ -212,8 +283,13 @@ https://www.youtube.com/shorts/GqwUHXvQ7oA
 
 ![效果](FogCube_images/28.gif)
 
-![节点](FogCube_images/29.png)
 
+```
+float distanceInBox = distanceToBoxExit - distanceToBoxEntry;
+float density = _Density * distanceInBox;
+float4 coloredDensity = saturate(density) * _Color;
+return coloredDesntiy;
+```
 现在把 `distanceInBox` 乘上 `_Density`（float），再乘上 `_Color`，就得到了本篇的最终结果。
 
 在后续文章中，我们会用这个体积盒，通过在立方体内部的距离上**逐层步进（marching through slices）**来采样纹理，从而做出云的效果。
@@ -248,3 +324,191 @@ https://www.youtube.com/shorts/GqwUHXvQ7oA
 > [!tip] 系列导航
 > **Part 1（本篇）**：体积雾立方体 —— Ray-Box 求交、深度检测、密度与颜色
 > **Part 2**：[Rolling Local Clouds Volume（滚动局部体积云）](Rolling%20Local%20Clouds%20Volume（滚动局部体积云）.md) —— 纹理采样、raymarching 切片、垂直渐变、上色
+
+
+
+```
+Shader "Custom/VolumetricFog"
+{
+	Properties	
+	{
+		[MainColor] _BaseColor("Base Color", Color) = (1, 1, 1, 1)
+		_Density ("Density",Float)= 1.0
+	}
+
+	SubShader
+	{
+		Tags
+		{
+			"RenderPipeline" = "UniversalPipeline"
+			"RenderType" = "Transparent"
+			"Queue" = "Transparent"
+		}
+		HLSLINCLUDE
+		#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+		#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderVariablesFunctions.hlsl"
+		//获取深度贴图
+		#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
+
+		bool RayBoxIntersect(float3 rayOrigin,float3 rayDirection,out float entryDistance,out float exitDistance)
+		{
+			float3 invDirection = 1 / rayDirection;
+			float3 distanceToFrontWalls = (-0.5 - rayOrigin) * invDirection;
+			float3 distanceToBackWalls = (0.5 - rayOrigin) * invDirection;
+			float3 trueEntryPerAxis = min(distanceToFrontWalls,distanceToBackWalls);
+			float3 trueExitPerAxis = max(distanceToFrontWalls,distanceToBackWalls);
+			//进入的时候要找最大值，因为当x进入了 并不代表y和z也进入了
+			entryDistance = max(max(trueEntryPerAxis.x,trueEntryPerAxis.y),trueEntryPerAxis.z);
+			//同理，只要有一个轴上坐标离开了也就意味着整体离开了
+			exitDistance = min(min(trueExitPerAxis.x,trueExitPerAxis.y),trueExitPerAxis.z);
+			return exitDistance >= max(entryDistance,0.0);
+		}
+	
+		float SampleDeviceDepth(float2 screenUV)
+		{
+			//SampleSceneDepth 返回 范围是 [0, 1]
+			// float SampleSceneDepth(float2 uv)
+			// {
+			// return SAMPLE_TEXTURE2D_X(_CameraDepthTexture,
+			// sampler_CameraDepthTexture,
+			// UnityStereoTransformScreenSpaceTex(uv)).r;
+			// }
+		
+			#if UNITY_REVERSED_Z //在D3D11/12、Metal、Vulkan、主机情况0 = 远 1 = 近
+				return SampleSceneDepth(screenUV);
+			
+			#else
+				return lerp(UNITY_NEAR_CLIP_VALUE,1.0,SampleSceneDepth(screenUV));
+			#endif
+		}
+		
+		struct Attributes
+		{
+			float4 positionOS : POSITION;
+			float2 uv : TEXCOORD0;
+		};
+		
+		struct Varyings
+		{
+			float4 positionHCS : SV_POSITION;
+			float3 positionOS : TEXCOORD0;
+		};
+		
+		TEXTURE2D(_BaseMap);
+		SAMPLER(sampler_BaseMap);
+		CBUFFER_START(UnityPerMaterial)
+			half4 _BaseColor;
+			float4 _BaseMap_ST;
+			float _Density;
+		CBUFFER_END
+		ENDHLSL
+	
+	  
+	
+	Pass
+	{
+		Name "Fog"
+		ZWrite Off
+		Blend One OneMinusSrcAlpha
+		Cull Front //避免相机进入后被剔除
+		ZTest Always
+		
+		HLSLPROGRAM
+		
+		#pragma vertex vert
+		#pragma fragment frag
+		
+		Varyings vert(Attributes IN)
+		{
+			Varyings OUT;
+			// struct VertexPositionInputs
+			// {
+			// float3 positionWS; // World space position（世界空间）
+			// float3 positionVS; // View space position（视图空间）
+			// float4 positionCS; // Homogeneous clip space position（齐次裁剪空间）
+			// float4 positionNDC; // Homogeneous NDC（给屏幕 UV 用）
+			// };
+			
+			VertexPositionInputs posInputs = GetVertexPositionInputs(IN.positionOS.xyz);
+			OUT.positionHCS = posInputs.positionCS;
+			OUT.positionOS = IN.positionOS.xyz;
+			return OUT;
+		}
+		
+		half4 frag(Varyings IN) : SV_Target
+		{
+			float3 cameraPosOS = TransformWorldToObject(_WorldSpaceCameraPos);
+			float distanceToBoxEntry,distanceToBoxExit;
+			//获取顶点在屏幕UV上的坐标
+			float2 screenUV = IN.positionHCS.xy / _ScaledScreenParams.xy;
+			//拿到深度值，但这个时候还是[0-1]
+			float deviceDepth = SampleDeviceDepth(screenUV);
+			//将深度值从0-1转换回原来的世界坐标
+			float3 sceneHitWS = ComputeWorldSpacePosition(screenUV,deviceDepth,UNITY_MATRIX_I_VP);
+			//将深度值从0-1转换回原来的物体坐标
+			float3 sceneHitOS = mul(unity_WorldToObject,float4(sceneHitWS,1.0)).xyz;
+			//物体空间下的从当前点到相机方向
+			float3 rayDirOS = normalize(IN.positionOS - cameraPosOS);
+			//
+			float sceneDepthOS = dot(sceneHitOS - cameraPosOS, rayDirOS);
+			bool isIntersect = RayBoxIntersect(cameraPosOS,rayDirOS,distanceToBoxEntry,distanceToBoxExit);
+		
+			if(!isIntersect)
+			{
+				discard;
+			}
+		
+			distanceToBoxEntry = max(distanceToBoxEntry,0.0);
+			distanceToBoxExit = min(distanceToBoxExit,sceneDepthOS);
+			if(distanceToBoxExit <= distanceToBoxEntry)
+				discard;
+		
+			float distanceInBox = distanceToBoxExit - distanceToBoxEntry;
+			float density = _Density * distanceInBox;
+			half4 finalColor = saturate(density) * _BaseColor;
+			return finalColor;
+			
+			// //世界空间转换到视口空间矩阵UNITY_MATRIX_V
+			// //第一行相机向右方向
+			// //第二行相机向上方向
+			// //第三行相机向前方向
+			// //因为在Unity中相机看向-z 需要取反
+			// float3 camForward = -UNITY_MATRIX_V[2].xyz;
+			// //将相机全局坐标转换到 物体空间
+			// //然后计算出从相机到顶点的方向
+			// float3 rayDirection = normalize(IN.positionOS - cameraPosOS);
+			// //判断射线是否相交
+			// bool isIntersect = RayBoxIntersect(cameraPosOS,rayDirection,distanceToBoxEntry,distanceToBoxExit);
+			// if(!isIntersect)
+			// {
+			// discard;
+			// }
+			// float distanceInBox = distanceToBoxExit - distanceToBoxEntry;
+			// return half4(distanceInBox,distanceInBox,distanceInBox,distanceInBox);
+		}
+		
+		ENDHLSL
+	
+	}
+
+	// Pass
+	// {
+	// Name "BoxDepthWrite"
+	// Tags
+	// {
+	// "LightMode" = "DepthNormals"//用于写入深度
+	// }
+	// ZWrite On
+	// ColorMask 0
+	// HLSLPROGRAM
+	// #pragma target 2.0
+	// #pragma vertex DepthNormalsVertex
+	// #pragma fragment DepthNormalsFragment
+	// #include "Packages/com.unity.render-pipelines.universal/Shaders/LitDepthNormalsPass.hlsl"
+	// ENDHLSL
+	// }
+	
+	}
+
+}
+```
