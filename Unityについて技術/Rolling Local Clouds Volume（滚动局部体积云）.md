@@ -281,56 +281,112 @@ if(verticalNoiseFade < 0.0001) continue;
 
 对于渐变以上的像素，我们可以利用循环：当垂直渐变值过低时直接 `continue` 跳过。这样能得到干净利落的边缘。
 
-![节点](RollingLocalClouds_images/32.png)
-
+```
+[loop]
+for(int s = 0;s < _StepCount;s++)
+{
+	float sliceDistance = distanceToBoxEntry + float(s) * stepSize;
+	float3 slicePosOS = cameraLocalPos + rayDirection * sliceDistance;
+	float3 slicePosWS = mul(unity_ObjectToWorld) * float4(slicePosOS,1.0)).xyz;
+	float noise = tex2Dlod(_NoiseTex,float4(slicePosWS.xz,0,0)).r;
+	
+	float verticalFade = saturate(slicePosOS.y + _HeightOffset) * _Vertical;
+	float verticalNoiseFade = 1 - (verticalFade - noise);
+	
+	if(verticalNoiseFade < 0.001)continue;
+	
+	float density = _Density * noise;
+	float passthrough = exp(-density*stepSize);
+	float3 sliceClouds = noise * visibility * (1.0 - passthrough);
+	
+	visibility *= passthrough;
+	cloudsColResult += sliceClouds;
+}
+```
 需要注意，要在循环上方加上 `[loop]` 关键字，告诉编译器不要把整个循环展开，而是保留成可以用 `continue` 跳过的循环。
 
 # 噪声的位移与缩放（Moving and Scaling the Noise）
 
 ![效果](RollingLocalClouds_images/33.gif)
 
-![节点](RollingLocalClouds_images/34.png)
+```
+float3 slicePosWS = mul(unity_ObjectToWorld,float4(slicePosOS,1.0)).xyz;
+float2 movementNoise = _Time.x * _MoveSpeedNoise;
+float2 noiseUV = float2((slicePosWS.xz * _ScaleNoise) - movementNoise);
+float noise = tex2Dlod(_NoiseTex,float4(noiseUV,0,0)).r;
 
+float verticalFade = (saturate(slicePosOS.y + _HeightOffset) * _Vertical);
+```
 现在缩放有点偏大，我们加上 `_ScaleNoise`，再用 Time 和 `_MoveSpeedNoise`（float2）让噪声动起来。
 
 # 用扭曲做噪声分层（Layering Noise with Distortion）
 
-![节点](RollingLocalClouds_images/35.png)
+```
+float3 slicePosWS = mul(unity_ObjectToWorld,float4(slicePosOS,1.0)).xyz;
+float2 movementNoise = _Time.x * MoveSpeedNoise;
+float2 movementDistort = _Time.x * MoveSpeedDistort;
 
+float2 distortUV = float2((slicePosWS.xz * _ScaleDistort) - movementDistort);
+float distort = tex2Dlod(_DistortTex,float4(distortUV,0,0)).r;
+
+float2 noiseUV = float2((slicePosWS.xz * _ScaleNoise) - movementNoise - (distort * _Distort));
+float noise = tex2Dlod(_NoiseTex,float4(noiseUV,0,0)).r;
+
+float verticalFade = saturate(slicePosOS.y + _HeightOffset) * _Vertical;
+```
 这里我们再采样一张纹理作为 distort（扭曲），并把它从噪声的 UV 中减去。
-
 用 `_Distort` 可以控制有多少扭曲量影响到最终噪声。
 
 # 上色（Colorize）
 
-![节点](RollingLocalClouds_images/36.png)
+```
+float noise = tex2Dlod(_NoiseTex,float4(noiseUV,0,0)).r;
 
+float noiseStretch = noise * _Stretch + _Offset;
+float3 colorizedNoise = lerp(_Color.rgb,_Color2.rgb,saturate(noiseStretch));
+
+float verticalFade = saturate(slicePosOS.y + _HeightOffset) * _Vertical;
+```
 颜色部分，我们取分层后的噪声结果，对数值做拉伸（stretch）和偏移（offset），这样可以控制颜色的分布位置。
 
-![节点](RollingLocalClouds_images/37.png)
-
+```
+float passthrough = exp(-density * stepSize);
+float3 sliceClouds = colorizedNoise * visibility * (1.0 - passthrough);
+```
 然后在切片颜色累加时，用 ColorizedNoise 替换掉原来的 noise。
 
 # 边缘淡出（Fading Edges）
 
-![示意](RollingLocalClouds_images/38.png)
+```
+float2 boxPos = 1 - abs(slicePosOS.xz) * 2;
+float2 lerpNoiseBoxcutoff = lerp(boxPos,verticalNoiseFade,_LerpCutOff);
+float2 boxCutoff = smoothstep(_Cutoff,_Cutoff + _Smoothness,lerpNoiseBoxcutoff);
+
+float boxEdges = saturate(boxCutoff.x * boxCutoff.y);
+
+float density = _Density * bodEdges * noise;
+```
 
 如果云铺满整个可见空间，这一步可以不做；但如果你的云会出现在能看见边界的空间里，就需要一个好看的衰减。
 
 我们用柔和的盒状遮罩（soft box mask）来做边缘淡出。（我在《World Position Effects》那篇里也用过这个遮罩，那里讲得更循序渐进。）
 
-![节点](RollingLocalClouds_images/39.png)
-
+```
+float2 boxPos = 1 - abs(slicePosOS.xz) * 2;
+```
 盒子的形状利用 slicePos 的 ObjectSpace 来求——正如你在《Box Volume Fog》里看到的，它的宽度始终是 1 个单位。
 所以我们用这个 -0.5 到 0.5 的空间，取绝对值，把两侧都变成 0.5 → 0 → 0.5；
 再乘以 2，变回 1 → 0 → 1。
-
-![节点](RollingLocalClouds_images/40.png)
-
+```
+float2 lerpNoiseBoxcutoff = lerp(boxPos,verticalNoiseFade,_LerpCutoff);
+float2 boxCutoff = smoothstep(_Cutoff,_Cutoff + _Smoothness,lerpNoiseBoxcutoff);
+```
 把这个柔和盒状遮罩和前面的垂直渐变用 lerp 混合，用于噪声效果，然后用 step 做出一个截断（cutoff）。
 
-![节点](RollingLocalClouds_images/41.png)
-
+```
+float boxEdges = saturate(boxCutoff.x * boxCutoff.y);
+float density = _Density * boxEdges * noise;
+```
 把两侧的结果相乘，得到一个值，再乘进密度里。
 
 # 加抖动（Adding Jitter）
@@ -341,12 +397,26 @@ if(verticalNoiseFade < 0.0001) continue;
 
 因为这是逐像素加的（每个像素都会投射光线），最终结果会呈现出像抖动（dither）一样的颗粒感。
 
-![对比](RollingLocalClouds_images/43.png)
+```
+float jitter = frac(sin(dot(i.screenPos.xy,float2(12.9898,78.233)))*43758.5453);
 
+float visibility = 1;
+float3 cloudsColResult = 0;
+[loop]
+for(int s = 0; s < _StepCount;s++)
+{
+	float sliceDistance = distanceToBoxEntry + (float(s) + lerp(0.5,jitter,_StepJitter)) * stepSize;
+}
+```
 为此我们用这个常见的 0–1 随机公式（我不确定它的出处，但 shader 里用得很多，我是在 Shader Graph 的 random 节点里看到的）。
 
-![节点](RollingLocalClouds_images/44.png)
-
+```
+void Unity_RandomRange_float(float2 Seed,float Min,float Max,out float Out)
+{
+	float randomno = frac(sin(dot(Seed,float2(12.9898,78.233))) * 43758.5453);
+	Out = lerp(Min,Max,randomno);
+}
+```
 然后把它加到「到盒子进入点的距离」上，用 `_StepJitter` 控制随机量的多少，在「固定的半步偏移」和「完全随机抖动」之间混合，从而随机偏移切片距离。
 
 ![节点](RollingLocalClouds_images/45.png)
